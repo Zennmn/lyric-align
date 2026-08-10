@@ -172,6 +172,10 @@ lyric-align --from-labels out.labels.txt -f lrc -o final.lrc   # 3. back to LRC
 # web player
 lyric-align song.wav lyrics.txt -f vtt -o out.vtt
 
+# Full GPU pipeline on RTX 5070 Ti (models/caches stay under the D-drive project root)
+lyric-align song.flac lyrics.txt --pipeline qwen --language zh \
+  --project-root D:\project\打轴 -f ttml -o D:\project\打轴\outputs\song.ttml
+
 # a file shaped for an AMLL TTML DB submission
 lyric-align song.wav lyrics.txt -f ttml -o out.ttml \
   --meta musicName="Song" --meta artists="Artist" --meta album="Album" \
@@ -253,6 +257,57 @@ filled (they stay flagged as guessed).
 
 The core (steps 3–5) is **pure Python standard library** — no numpy, no torch.
 The heavy pieces (Whisper, Demucs) are optional extras behind lazy imports.
+
+### GPU Qwen / HubertFA pipeline
+
+The optional `pipeline` extra adds the Mel-Band RoFormer and Qwen3 ASR
+backends. The separate `hubertfa` extra adds HubertFA v0.0.7 and its Japanese/
+English G2P dependencies. On Windows, prepare a D-drive environment with
+`powershell -ExecutionPolicy Bypass -File scripts/setup_d_env.ps1`, then run
+the `--pipeline qwen` command above. Mel-Band runs on `cuda:0` first and is
+released before the alignment models. Missing weights are downloaded into the
+configured Hugging Face/Mel-Band/HubertFA directories under the project root.
+
+The HubertFA ONNX weight is intentionally not stored in Git because it is
+hundreds of megabytes. Download the official `1218_hfa_model_new_dict` bundle
+from the [HubertFA releases/discussion](https://github.com/wolfgitpr/HubertFA/releases)
+and extract it so that
+`models\hubertfa\1218_hfa_model_new_dict\model.onnx` exists. The repository
+contains the lightweight inference adapter and the required third-party
+runtime source, but not model weights or evaluation audio.
+
+The default `--aligner-backend qwen` keeps Qwen3-ForcedAligner for its
+speech-oriented baseline. For singing, use HubertFA:
+
+```powershell
+lyric-align song.flac lyrics.txt --pipeline qwen --aligner-backend hubertfa `
+  --language ja --asr-window 8 --asr-overlap 1 `
+  --pairing auto `
+  --threshold 0.35 --qwen-device cuda:0 --dtype bf16 `
+  --project-root D:\project\打轴 -f ttml -o outputs\song.ttml
+```
+
+In HubertFA mode, Qwen3-ASR is used only to make coarse text windows;
+Qwen3-ForcedAligner is not loaded. HubertFA aligns 10–15 lyric lines at a time
+with a padded audio limit of about 100 seconds, then emits Japanese one-character
+and English one-word spans. This longer mixed-language context resolves repeated
+hooks better than independent 2-line calls, while the duration limit avoids the
+full-song ONNX memory spike. The adapter requires
+`CUDAExecutionProvider` for a CUDA request and reports the active provider.
+
+For Japanese/English mixed lyrics, both adapters keep Japanese characters as
+individual units but keep contiguous Latin words such as `I`, `need`, and `you`
+together in the TTML spans. A `0.35` coarse-match threshold is a practical
+starting point when sung English is recognized with small wording errors; keep
+the non-zero failure status and inspect any remaining unmatched lines. Qwen ASR
+is still speech-oriented, so severe recognition errors can lose the lyric phase
+even after separation; HubertFA cannot recover a lyric line that was assigned to
+the wrong audio window.
+
+The Qwen pipeline returns a non-zero status when a line cannot be reliably
+forced-aligned, while still writing the TTML. Add `--interpolate` only when
+line-level guesses are acceptable for the remaining gaps; those guesses do not
+have per-character timestamps.
 
 ## Where this came from
 

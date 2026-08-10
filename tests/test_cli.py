@@ -8,7 +8,7 @@ FIX = Path(__file__).parent / "fixtures" / "segments_sample.json"
 
 def write_lyrics(tmp_path, text):
     p = tmp_path / "lyrics.txt"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     return p
 
 
@@ -32,7 +32,7 @@ def test_cli_segments_to_lrc(tmp_path, capsys):
     out = tmp_path / "out.lrc"
     rc = main([str(lyrics), "--segments", str(FIX), "--pairing", "1", "-o", str(out)])
     assert rc == 0
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert text.startswith("[00:00.50]")
     assert "君が袖振る" in text
     assert "aligned 3/3 lines" in capsys.readouterr().err
@@ -73,7 +73,7 @@ def test_cli_rejects_empty_lyrics(tmp_path, capsys):
 def test_cli_reports_the_pairing_it_picked(tmp_path, capsys):
     from lyric_align.cli import main
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n標野ゆき野守は見ずや\n")
+    lyrics.write_text("あかねさす紫野ゆき\n標野ゆき野守は見ずや\n", encoding="utf-8")
     assert main([str(lyrics), "--segments", str(FIX), "-o", str(tmp_path / "o.json")]) == 0
     err = capsys.readouterr().err
     assert "pairing:" in err and "auto" in err
@@ -82,7 +82,7 @@ def test_cli_reports_the_pairing_it_picked(tmp_path, capsys):
 def test_cli_accepts_an_explicit_pairing(tmp_path, capsys):
     from lyric_align.cli import main
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n")
+    lyrics.write_text("あかねさす紫野ゆき\n", encoding="utf-8")
     assert main([str(lyrics), "--segments", str(FIX), "--pairing", "1",
                  "-o", str(tmp_path / "o.json")]) == 0
     assert "auto" not in capsys.readouterr().err
@@ -93,8 +93,49 @@ def test_cli_rejects_a_nonsense_pairing(tmp_path, capsys):
 
     from lyric_align.cli import main
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n")
+    lyrics.write_text("あかねさす紫野ゆき\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         main([str(lyrics), "--segments", str(FIX), "--pairing", "two",
               "-o", str(tmp_path / "o.json")])
     capsys.readouterr()
+
+
+def test_qwen_pipeline_validates_pairing_before_model_load(tmp_path, capsys):
+    audio = tmp_path / "song.flac"
+    audio.write_bytes(b"placeholder")
+    lyrics = write_lyrics(tmp_path, "あかねさす紫野ゆき\n")
+
+    assert main([
+        str(audio), str(lyrics), "--pipeline", "qwen", "--pairing", "two"
+    ]) == 2
+    assert "expects an integer" in capsys.readouterr().err
+
+
+def test_qwen_pipeline_writes_output_but_returns_failure_for_bad_chunks(
+    tmp_path, monkeypatch
+):
+    from lyric_align.model import AlignedLine
+    from lyric_align.pipeline import PipelineResult
+
+    audio = tmp_path / "song.flac"
+    audio.write_bytes(b"placeholder")
+    lyrics = write_lyrics(tmp_path, "甲乙\n")
+    out = tmp_path / "out.json"
+
+    def fake_pipeline(*args, **kwargs):
+        return PipelineResult(
+            aligned=[AlignedLine("甲乙", None, None, 0.2, False)],
+            vocals_path=tmp_path / "vocals.wav",
+            segment_count=1,
+            chunk_count=1,
+            retry_count=1,
+            failures=("chunk (0,): synthetic failure",),
+        )
+
+    monkeypatch.setattr("lyric_align.pipeline.run_qwen_pipeline", fake_pipeline)
+
+    assert main([
+        str(audio), str(lyrics), "--pipeline", "qwen", "-f", "json",
+        "-o", str(out), "-q",
+    ]) == 1
+    assert out.exists()

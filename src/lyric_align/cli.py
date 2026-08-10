@@ -28,7 +28,7 @@ SECTION_MARKER = re.compile(r"^[\[(](?:[^\[\]()]{0,40})[\])]$")
 def read_lyrics(path: Path) -> list[str]:
     """One lyric line per line; drop blanks, section markers and # comments."""
     out = []
-    for raw in path.read_text().splitlines():
+    for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or SECTION_MARKER.match(line):
             continue
@@ -37,7 +37,7 @@ def read_lyrics(path: Path) -> list[str]:
 
 
 def load_segments(path: Path) -> list[Segment]:
-    return [Segment.from_dict(d) for d in json.loads(path.read_text())]
+    return [Segment.from_dict(d) for d in json.loads(path.read_text(encoding="utf-8"))]
 
 
 DESCRIPTION = """\
@@ -115,6 +115,105 @@ def build_parser() -> argparse.ArgumentParser:
                           "delivery (rap) but silences slow, sustained singing — if you "
                           "get few or no segments, try this first")
 
+    pipe = p.add_argument_group(
+        "GPU Qwen pipeline", "used when --pipeline qwen is selected"
+    )
+    pipe.add_argument(
+        "--pipeline", choices=("legacy", "qwen"), default="legacy",
+        help="inference pipeline (default: legacy; qwen runs the Mel-Band + Qwen flow)",
+    )
+    pipe.add_argument(
+        "--project-root", default=None,
+        help="D-drive project root for model/cache/audio/output assets "
+             "(default: current directory)",
+    )
+    pipe.add_argument(
+        "--qwen-device", default="cuda:0",
+        help="Qwen/Mel-Band device (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--dtype", choices=("auto", "bf16", "fp16", "fp32"), default="bf16",
+        help="GPU model dtype (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--melband-model", default="melband-roformer-kim-vocals",
+        help="Mel-Band model registry name",
+    )
+    pipe.add_argument(
+        "--melband-overlap", type=int, choices=(4, 8), default=4,
+        help="Mel-Band overlap-add count (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--asr-model", default="Qwen/Qwen3-ASR-1.7B",
+        help="Qwen ASR model id or local path",
+    )
+    pipe.add_argument(
+        "--aligner-model", default="Qwen/Qwen3-ForcedAligner-0.6B",
+        help="Qwen ForcedAligner model id or local path",
+    )
+    pipe.add_argument(
+        "--aligner-backend", choices=("qwen", "hubertfa"), default="qwen",
+        help="final character aligner backend (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--coarse-aligner-model", default="Qwen/Qwen3-ForcedAligner-0.6B",
+        help="Qwen ForcedAligner used only for ASR coarse timestamps; "
+             "ignored when --aligner-backend hubertfa; set an empty/None "
+             "value in the Python API to disable",
+    )
+    pipe.add_argument(
+        "--hubertfa-model", default=None,
+        help="HubertFA model.onnx path (default: project models\\hubertfa)",
+    )
+    pipe.add_argument(
+        "--hubertfa-source", default=None,
+        help="HubertFA v0.0.7 source directory (default: project third_party)",
+    )
+    pipe.add_argument(
+        "--asr-window", type=float, default=20.0,
+        help="coarse ASR window in seconds (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--asr-overlap", type=float, default=1.0,
+        help="coarse ASR window overlap in seconds (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--min-lines", type=int, default=2,
+        help="minimum lyric lines per ForcedAligner chunk (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--max-lines", type=int, default=4,
+        help="maximum lyric lines per ForcedAligner chunk (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--chunk-padding", type=float, default=1.5,
+        help="normal ForcedAligner audio padding in seconds (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--retry-padding", type=float, default=4.0,
+        help="padding used after an alignment anomaly (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--gap-threshold", type=float, default=0.08,
+        help="close per-character gaps smaller than this many seconds",
+    )
+    pipe.add_argument(
+        "--max-inference-batch-size", type=int, default=1,
+        help="Qwen inference batch cap (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--max-new-tokens", type=int, default=256,
+        help="Qwen ASR generation cap per window (default: %(default)s)",
+    )
+    pipe.add_argument(
+        "--local-files-only", action="store_true",
+        help="fail instead of downloading missing Qwen weights",
+    )
+    pipe.add_argument(
+        "--overwrite-vocals", action="store_true",
+        help="re-run Mel-Band even when the cached vocal stem exists",
+    )
+
     al = p.add_argument_group("alignment")
     al.add_argument("--pairing", default="auto", metavar="N|auto",
                     help="lyric lines per stanza unit matched to one segment. "
@@ -174,7 +273,7 @@ def main(argv=None) -> int:
         # Converting a corrected label track: the file already holds the text and
         # the times, so there is nothing to transcribe and nothing to match.
         try:
-            aligned = from_aud(Path(args.from_labels).read_text())
+            aligned = from_aud(Path(args.from_labels).read_text(encoding="utf-8"))
         except ValueError as e:
             print(f"error: {args.from_labels}: {e}", file=sys.stderr)
             return 2
@@ -197,6 +296,72 @@ def main(argv=None) -> int:
     if not lyrics:
         print(f"error: no lyric lines found in {args.lyrics}", file=sys.stderr)
         return 2
+
+    if args.pipeline == "qwen":
+        if args.segments:
+            print("error: --pipeline qwen needs AUDIO, not --segments", file=sys.stderr)
+            return 2
+        if not args.audio:
+            print("error: --pipeline qwen needs AUDIO", file=sys.stderr)
+            return 2
+        if str(args.pairing).lower() == "auto":
+            pipeline_pairing = "auto"
+        else:
+            try:
+                pipeline_pairing = int(args.pairing)
+            except ValueError:
+                print(
+                    f"error: --pairing expects an integer or 'auto', got {args.pairing!r}",
+                    file=sys.stderr,
+                )
+                return 2
+        try:
+            from .pipeline import run_qwen_pipeline
+
+            result = run_qwen_pipeline(
+                args.audio,
+                lyrics,
+                project_root=args.project_root or Path.cwd(),
+                device=args.qwen_device,
+                dtype=args.dtype,
+                melband_model=args.melband_model,
+                melband_overlap=args.melband_overlap,
+                asr_model=args.asr_model,
+                aligner_model=args.aligner_model,
+                aligner_backend=args.aligner_backend,
+                coarse_aligner_model=args.coarse_aligner_model,
+                hubertfa_model=args.hubertfa_model,
+                hubertfa_source=args.hubertfa_source,
+                language=args.language,
+                asr_window_seconds=args.asr_window,
+                asr_overlap_seconds=args.asr_overlap,
+                pairing=pipeline_pairing,
+                threshold=args.threshold,
+                window=args.window,
+                min_lines=args.min_lines,
+                max_lines=args.max_lines,
+                chunk_padding=args.chunk_padding,
+                retry_padding=args.retry_padding,
+                max_gap=args.gap_threshold,
+                max_inference_batch_size=args.max_inference_batch_size,
+                max_new_tokens=args.max_new_tokens,
+                local_files_only=args.local_files_only,
+                overwrite_vocals=args.overwrite_vocals,
+                interpolate=args.interpolate,
+                log=log,
+            )
+        except (ImportError, FileNotFoundError, RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 3
+        log(
+            f"qwen pipeline ({args.aligner_backend} aligner): "
+            f"{result.segment_count} ASR segments, "
+            f"{result.chunk_count} chunks, {result.retry_count} retries"
+        )
+        if result.failures:
+            log(f"forced-align fallback chunks: {len(result.failures)}")
+        write_rc = _write(args, fmt, targets, result.aligned, karaoke, log)
+        return 1 if result.failures and write_rc == 0 else write_rc
 
     if args.segments:
         segments = load_segments(Path(args.segments))
@@ -309,12 +474,16 @@ def _write(args, fmt, targets, aligned, karaoke, log) -> int:
         base = base.with_name(base.name[:-len(base.suffix)] if base.suffix else base.name)
         for name in targets:
             path = base.with_name(base.name + EXTENSIONS[name])
-            path.write_text(FORMATTERS[name](aligned, karaoke=karaoke, lang=lang,
-                                             meta=meta))
+            path.write_text(
+                FORMATTERS[name](aligned, karaoke=karaoke, lang=lang, meta=meta),
+                encoding="utf-8",
+            )
             log(f"wrote {path}")
     elif args.output:
         Path(args.output).write_text(
-            FORMATTERS[fmt](aligned, karaoke=karaoke, lang=lang, meta=meta))
+            FORMATTERS[fmt](aligned, karaoke=karaoke, lang=lang, meta=meta),
+            encoding="utf-8",
+        )
         log(f"wrote {args.output}")
     else:
         sys.stdout.write(

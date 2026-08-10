@@ -11,7 +11,7 @@ FIX = Path(__file__).parent / "fixtures" / "segments_sample.json"
 
 
 def load():
-    return [Segment.from_dict(d) for d in json.loads(FIX.read_text())]
+    return [Segment.from_dict(d) for d in json.loads(FIX.read_text(encoding="utf-8"))]
 
 
 def test_align_per_line():

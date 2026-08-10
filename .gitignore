@@ -1,14 +1,56 @@
+# Python/package build artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
+.pytest_cache/
+
+# Local environments and downloaded model/cache trees
 .venv/
 venv/
-.pytest_cache/
-.DS_Store
+.python/
+.cache/
+models/
+audio_cache/
+outputs/
+.codegraph/
+
+# User media and generated audio files
 *.wav
 *.mp3
 *.flac
 *.ogg
+*.onnx
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+歌词.txt
+
+# Only the HubertFA runtime subset is vendored; keep training/evaluation files
+# and any downloaded release contents out of future broad staging commands.
+third_party/HubertFA-v0.0.7/*
+!third_party/HubertFA-v0.0.7/
+!third_party/HubertFA-v0.0.7/LICENSE
+!third_party/HubertFA-v0.0.7/onnx_infer.py
+!third_party/HubertFA-v0.0.7/requirements_onnx.txt
+third_party/HubertFA-v0.0.7/tools/*
+!third_party/HubertFA-v0.0.7/tools/
+!third_party/HubertFA-v0.0.7/tools/__init__.py
+!third_party/HubertFA-v0.0.7/tools/align_word.py
+!third_party/HubertFA-v0.0.7/tools/config_utils.py
+!third_party/HubertFA-v0.0.7/tools/decoder.py
+!third_party/HubertFA-v0.0.7/tools/export_tool.py
+!third_party/HubertFA-v0.0.7/tools/g2p.py
+!third_party/HubertFA-v0.0.7/tools/infer_base.py
+!third_party/HubertFA-v0.0.7/tools/plot.py
+third_party/HubertFA-v0.0.7/**/__pycache__/
+
+# Agent-local planning notes
+task_plan.md
+findings.md
+progress.md
+
+.DS_Store
 demo_local/
