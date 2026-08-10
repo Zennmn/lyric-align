@@ -97,6 +97,26 @@ def test_ttml_and_elrc_rebuild_the_source_line_exactly():
     assert _elrc_line(to_elrc([b])) == en
 
 
+def test_ttml_preserves_explicit_mixed_language_units():
+    line = "君と stay with me ずっと"
+    units = [
+        {"text": "君", "start": 0.0, "end": 0.2, "unit": True},
+        {"text": "と", "start": 0.2, "end": 0.4, "unit": True},
+        {"text": "stay", "start": 0.4, "end": 0.8, "unit": True},
+        {"text": "with", "start": 0.8, "end": 1.1, "unit": True},
+        {"text": "me", "start": 1.1, "end": 1.3, "unit": True},
+        {"text": "ず", "start": 1.3, "end": 1.5, "unit": True},
+        {"text": "っ", "start": 1.5, "end": 1.7, "unit": True},
+        {"text": "と", "start": 1.7, "end": 1.9, "unit": True},
+    ]
+
+    out = to_ttml([AlignedLine(line, 0.0, 2.0, 1.0, True, units)])
+
+    spans = re.findall(r"<span [^>]*>(.*?)</span>", out)
+    assert spans == ["君", "と", "stay", "with", "me", "ず", "っ", "と"]
+    assert _ttml_lines(out) == [line]
+
+
 def test_ttml_spans_stay_inside_their_line():
     # TTML requires a child's span to be contained by its parent's; a strict
     # player otherwise clamps or drops the tail.
@@ -181,12 +201,12 @@ def test_ttml_metadata_reaches_the_writer_from_the_cli(tmp_path, capsys):
     from lyric_align.cli import main
     fix = Path(__file__).parent / "fixtures" / "segments_sample.json"
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n")
+    lyrics.write_text("あかねさす紫野ゆき\n", encoding="utf-8")
     out = tmp_path / "o.ttml"
     assert main([str(lyrics), "--segments", str(fix), "--pairing", "1",
                  "-f", "ttml", "-o", str(out),
                  "--meta", "musicName=紫野", "--meta", "ncmMusicId=123"]) == 0
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert '<amll:meta key="musicName" value="紫野"/>' in text
     assert '<amll:meta key="ncmMusicId" value="123"/>' in text
     capsys.readouterr()
@@ -200,7 +220,7 @@ def test_ttml_metadata_rejects_a_malformed_pair(tmp_path, capsys):
     from lyric_align.cli import main
     fix = Path(__file__).parent / "fixtures" / "segments_sample.json"
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n")
+    lyrics.write_text("あかねさす紫野ゆき\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         main([str(lyrics), "--segments", str(fix), "-f", "ttml",
               "-o", str(tmp_path / "o.ttml"), "--meta", "musicName"])
@@ -212,11 +232,11 @@ def test_ttml_language_comes_from_the_cli(tmp_path, capsys):
     from pathlib import Path
     fix = Path(__file__).parent / "fixtures" / "segments_sample.json"
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n")
+    lyrics.write_text("あかねさす紫野ゆき\n", encoding="utf-8")
     out = tmp_path / "o.ttml"
     assert main([str(lyrics), "--segments", str(fix), "--pairing", "1",
                  "--language", "ja", "-f", "ttml", "-o", str(out)]) == 0
-    assert 'xml:lang="ja"' in out.read_text()
+    assert 'xml:lang="ja"' in out.read_text(encoding="utf-8")
     capsys.readouterr()
 
 
@@ -258,10 +278,11 @@ def test_cli_converts_a_label_track_without_audio_or_lyrics(tmp_path, capsys):
     from lyric_align.cli import main
     labels = tmp_path / "in.labels.txt"
     labels.write_text("6.600000\t14.300000\tAmazing grace\n"
-                      "14.300000\t23.700000\tThat saved a wretch like me\n")
+                      "14.300000\t23.700000\tThat saved a wretch like me\n",
+                      encoding="utf-8")
     out = tmp_path / "out.lrc"
     assert main(["--from-labels", str(labels), "-o", str(out)]) == 0
-    assert out.read_text().splitlines() == [
+    assert out.read_text(encoding="utf-8").splitlines() == [
         "[00:06.60]Amazing grace",
         "[00:14.30]That saved a wretch like me",
     ]
@@ -271,11 +292,11 @@ def test_cli_converts_a_label_track_without_audio_or_lyrics(tmp_path, capsys):
 def test_cli_says_a_label_track_cannot_give_per_syllable_output(tmp_path, capsys):
     from lyric_align.cli import main
     labels = tmp_path / "in.labels.txt"
-    labels.write_text("0.000000\t1.000000\tAmazing grace\n")
+    labels.write_text("0.000000\t1.000000\tAmazing grace\n", encoding="utf-8")
     out = tmp_path / "out.ttml"
     assert main(["--from-labels", str(labels), "-o", str(out)]) == 0
     assert "stays line-level" in capsys.readouterr().err
-    xml = out.read_text()
+    xml = out.read_text(encoding="utf-8")
     assert "Amazing grace" in xml and "<span" not in xml
 
 
@@ -304,7 +325,7 @@ def test_cli_writes_every_format_with_f_all(tmp_path, capsys):
     from pathlib import Path
     fix = Path(__file__).parent / "fixtures" / "segments_sample.json"
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n標野ゆき野守は見ずや\n君が袖振る\n")
+    lyrics.write_text("あかねさす紫野ゆき\n標野ゆき野守は見ずや\n君が袖振る\n", encoding="utf-8")
     rc = main([str(lyrics), "--segments", str(fix), "--pairing", "1",
                "-f", "all", "-o", str(tmp_path / "out")])
     assert rc == 0
@@ -312,7 +333,7 @@ def test_cli_writes_every_format_with_f_all(tmp_path, capsys):
         assert (tmp_path / f"out{ext}").exists(), ext
     # elrc/ttml are per-syllable formats: they must get char timings even though
     # --karaoke was not passed.
-    assert "<00:00.50>" in (tmp_path / "out.elrc").read_text()
+    assert "<00:00.50>" in (tmp_path / "out.elrc").read_text(encoding="utf-8")
     capsys.readouterr()
 
 
@@ -321,6 +342,6 @@ def test_cli_rejects_f_all_without_output(tmp_path, capsys):
     from pathlib import Path
     fix = Path(__file__).parent / "fixtures" / "segments_sample.json"
     lyrics = tmp_path / "l.txt"
-    lyrics.write_text("あかねさす紫野ゆき\n")
+    lyrics.write_text("あかねさす紫野ゆき\n", encoding="utf-8")
     assert main([str(lyrics), "--segments", str(fix), "-f", "all"]) == 2
     assert "needs -o" in capsys.readouterr().err

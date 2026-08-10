@@ -42,6 +42,24 @@ dependencies = []
 [project.optional-dependencies]
 asr = ["faster-whisper>=1.0"]
 separate = ["demucs>=4.0"]
+pipeline = [
+  "qwen-asr>=0.0.6",
+  "melband-roformer-infer>=0.1.5",
+  "soundfile>=0.12",
+  "numpy>=2.0",
+  "torchaudio>=2.6",
+  "imageio-ffmpeg>=0.6",
+]
+hubertfa = [
+  "click>=8.0",
+  "onnxruntime-gpu>=1.19",
+  "librosa<0.10",
+  "matplotlib>=3.8",
+  "pykakasi>=2.3",
+  "PyYAML>=6.0",
+  "textgrid>=1.5",
+  "tqdm>=4.0",
+]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

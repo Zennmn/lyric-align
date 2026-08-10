@@ -85,6 +85,11 @@ def syllable_timings(text: str, chars: list[dict]) -> list[dict]:
     """
     if not chars:
         return []
+
+    explicit = _explicit_unit_timings(text, chars)
+    if explicit is not None:
+        return explicit
+
     per_char = cjk_ratio(text) >= 0.2
 
     units: list[list] = []          # [source_text, [timings], space_after]
@@ -115,3 +120,33 @@ def syllable_timings(text: str, chars: list[dict]) -> list[dict]:
 
     return [{"text": t, "start": ts[0]["start"], "end": ts[-1]["end"],
              "space_after": sp} for t, ts, sp in units]
+
+
+def _explicit_unit_timings(text: str, chars: list[dict]) -> list[dict] | None:
+    """Read backend-provided mixed-language units without re-splitting words."""
+
+    if not chars or not all(item.get("unit") is True for item in chars):
+        return None
+
+    cursor = 0
+    units: list[dict] = []
+    for item in chars:
+        token = str(item.get("text", ""))
+        if not token:
+            return None
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        if not text.startswith(token, cursor):
+            return None
+        cursor += len(token)
+        space_after = cursor < len(text) and text[cursor].isspace()
+        units.append({
+            "text": token,
+            "start": item["start"],
+            "end": item["end"],
+            "space_after": space_after,
+        })
+
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    return units if cursor == len(text) else None
